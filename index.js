@@ -9,7 +9,14 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: [
+        'http://localhost:3000',
+        'https://unshod-mgi35aplr-sojibul-islam-ranas-projects.vercel.app',
+        'https://unishop-server.vercel.app'
+    ],
+    credentials: true
+}));
 app.use(express.json());
 
 // Database Connection
