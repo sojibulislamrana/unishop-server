@@ -17,14 +17,25 @@ app.use(express.json());
 const prompt = process.env.MONGODB_URI ? "Authenticating with User provided URI..." : "Using Local MongoDB...";
 console.log(prompt);
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/unishop', {
-  serverSelectionTimeoutMS: 5000 // Timeout after 5s instead of 30s
-})
-  .then(() => console.log('MongoDB Connected Successfully'))
-  .catch(err => {
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected) return;
+  
+  try {
+      await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/unishop', {
+        serverSelectionTimeoutMS: 5000
+      });
+      isConnected = true;
+      console.log('MongoDB Connected Successfully');
+  } catch (err) {
       console.error('MongoDB Connection Error:', err.message);
-      console.error('Check your .env file or ensure MongoDB is running.');
-  });
+      // Don't exit process in serverless, just throw or let middleware handle
+  }
+};
+
+// Attempt initial connection (optional in serverless but good for local)
+connectDB();
 
 // Routes
 const itemRoutes = require('./routes/items');
@@ -34,9 +45,16 @@ app.get('/', (req, res) => {
 });
 
 // Middleware to check DB connection
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
-    return res.status(503).json({ error: 'Database not connected' });
+      try {
+          await connectDB();
+          if (mongoose.connection.readyState !== 1) {
+               return res.status(503).json({ error: 'Database not connected' });
+          }
+      } catch (err) {
+          return res.status(503).json({ error: 'Database connection failed' });
+      }
   }
   next();
 });
