@@ -24,25 +24,46 @@ app.use(express.json());
 const prompt = process.env.MONGODB_URI ? "Authenticating with User provided URI..." : "Using Local MongoDB...";
 console.log(prompt);
 
-let isConnected = false;
+// Database Connection (Cached Pattern for Serverless)
+let cached = global.mongoose;
 
-const connectDB = async () => {
-  if (isConnected) return;
-  
-  try {
-      await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/unishop', {
-        serverSelectionTimeoutMS: 5000
-      });
-      isConnected = true;
-      console.log('MongoDB Connected Successfully');
-  } catch (err) {
-      console.error('MongoDB Connection Error:', err.message);
-      // Don't exit process in serverless, just throw or let middleware handle
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
+async function connectDB() {
+  if (cached.conn) {
+    return cached.conn;
   }
-};
 
-// Attempt initial connection (optional in serverless but good for local)
-connectDB();
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 5000,
+    };
+    
+    // Log intent (don't log the full URI for security)
+    console.log("Connecting to MongoDB..."); 
+
+    cached.promise = mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/unishop', opts).then((mongoose) => {
+      console.log('MongoDB Connected New Session');
+      return mongoose;
+    }).catch(err => {
+        console.error('MongoDB Connection Init Error:', err);
+        throw err;
+    });
+  }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
+    console.error('MongoDB Connection Await Error:', e);
+    throw e;
+  }
+
+  return cached.conn;
+}
 
 // Routes
 const itemRoutes = require('./routes/items');
@@ -51,19 +72,15 @@ app.get('/', (req, res) => {
   res.send('UniShop API is running');
 });
 
-// Middleware to check DB connection
+// Middleware to ensure DB is connected
 app.use(async (req, res, next) => {
-  if (mongoose.connection.readyState !== 1) {
-      try {
-          await connectDB();
-          if (mongoose.connection.readyState !== 1) {
-               return res.status(503).json({ error: 'Database not connected' });
-          }
-      } catch (err) {
-          return res.status(503).json({ error: 'Database connection failed' });
-      }
-  }
-  next();
+    try {
+        await connectDB();
+        next();
+    } catch (error) {
+        console.error("Middleware DB Connection Failed:", error);
+        res.status(503).json({ error: 'Database connection failed', details: error.message });
+    }
 });
 
 app.use('/api/items', itemRoutes);
